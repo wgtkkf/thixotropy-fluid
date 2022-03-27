@@ -1,0 +1,1871 @@
+!***************************************************************
+!*                                                             *
+!*    2-Dimensional Thixotropic Flow Simulator                 *
+!*                                                             *
+!*    HerschelBulkley Fluid & Steady simple shear flow         *
+!*    Two Types of Calculation is executed (10/10/26)		   *
+!*    Select subroutine RVVX(Y) or RVVX(Y)1                    *
+!*    Steady simple shear flow                                 *
+!*    Finite Element Method                                    *
+!*    Triangular Linear Mesh                                   *
+!*    Velocity Correction Method                               *
+!*    SUPG Version                                             *
+!*    Runge-Kutta method (2nd order)                           *
+!*                                                             *
+!*    non-dimensional form                                     *
+!*                                                             *
+!*    Coded by Takuro TOKUNAGA, Oct,27,2010                    *
+!*                                                             *
+!***************************************************************
+
+!*********************************
+!*  Main Routine                 *
+!*  Last Modified : OCT 26,2010  *
+!*********************************
+
+
+!*     use portlib
+
+!*     [CAUTION]
+!*        The statement "use portlib" is for Compaq (Visual) 
+!*        Fortran. If your system works on UNIX, remove this 
+!*        statement.
+
+!* rewrite common to module 10/13
+!* finished rewrite common to module 10/19
+
+
+!* memo paint net
+
+module parameters
+
+implicit none
+
+	  integer,PARAMETER :: COUNT=100
+	  double precision,PARAMETER :: phi0=0.d0,phi1=5.d0   ! heve to initialize
+	  double precision,PARAMETER :: GG0=5.d0
+	  double precision,PARAMETER :: kfluid=2,lambda=1
+	  integer,PARAMETER :: nhb= 2 						  !used for hb model parameter myu 10/10/22
+	  integer,PARAMETER :: khb= 2 						  !used for hb model parameter myu 10/10/22
+	  integer,PARAMETER :: EMAX=5000,NMAX=5000
+      integer,PARAMETER :: BCMAX1=500,BCMAX2=500,BCMAX3=200
+      integer,PARAMETER :: BCMAX4=200,BCMAX5=200,BCMAX6=200
+	  integer,PARAMETER :: BCMAX4_F=500,BCMAX5_F=500,BCMAX6_F=500 !have to reconsider the numbers
+      integer,PARAMETER :: BCMAXN=50
+
+	  integer NE,NP
+	  integer :: NF=0,COUNT2					          !used for subroutine output_step
+	  double precision  NOP(EMAX,3),CORD(NMAX,2)
+	  double precision  RE,TY,MM
+      double precision  EHX(EMAX,3,3),EHY(EMAX,3,3)		  !/MTR1/
+      double precision  EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)   !/MTR2/
+      double precision  EMM(EMAX,3)						  !/MTR3/
+      double precision  ESS(EMAX,3,3)					  !/MTR4/
+      double precision  LMM(NMAX),ILMM(NMAX)			  !/MTR5/
+      double precision  EB(EMAX,3),EC(EMAX,3),AR(EMAX)	  !/MTR6/
+	  double precision  EB1(EMAX,3),EC1(EMAX,3) 		  !/MTR7/
+      double precision  VX0(NMAX),VY0(NMAX)			  	  !/V0/
+      double precision  VX1(NMAX),VY1(NMAX)			  	  !/V1/
+      double precision  PR0(NMAX),PR1(NMAX)			      !/PR/
+	  double precision  TXX0(NMAX),TXY0(NMAX),TYY0(NMAX) !STRESS TENSOR 10/10/26
+	  double precision  TXX1_F(NMAX),TXY1_F(NMAX),TYY1_F(NMAX) !STRESS TENSOR 10/10/26
+      double precision  VVX(NMAX),VVY(NMAX)				  !/VEC1/
+      double precision  VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)   !/BC1/
+      double precision  VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)   !/BC2/
+      double precision  VBC3(BCMAX3),NBC3,NNBC3(BCMAX3)   !/BC3/
+      double precision  VBCN(BCMAXN),NBCN,NNBCN(BCMAXN,2) !/BCN/
+	  
+	  double precision  VBC4_F(BCMAX4_F),NBC4_F,NNBC4_F(BCMAX4_F)   !/BC4 ABOUT FLUIDITIY/
+      double precision  VBC5_F(BCMAX5_F),NBC5_F,NNBC5_F(BCMAX5_F)   !/BC5 ABOUT FLUIDITIY/
+      double precision  VBC6_F(BCMAX6_F),NBC6_F,NNBC6_F(BCMAX6_F)   !/BC6 ABOUT FLUIDITIY/
+      	  
+  	  double precision  CC0,CC1(NMAX),CC2,CC3,CC4,CC5,CC6
+	  double precision  SR1								  !/shear rate/
+      double precision  XX(NMAX)						  !/DP/
+	  double precision  NN1(NMAX)						  !//
+	  double precision  phi(EMAX)						  !/for subroutine fluid/
+	  double precision  INTVAL                            !the interval to output data
+
+end module parameters
+
+
+      PROGRAM MAIN
+      use parameters
+!*
+      IMPLICIT NONE
+!*
+!*     [CAUTION]
+!*        The option "NONE" is available in Fortran 90, so you
+!*        have to comment out this line  if you want to use  a
+!*        FORTRAN 77 compiler.
+
+!*	   [postscript]
+!*        this program is rewrited to f90
+
+
+       INTEGER I								!EMAX,NMAX,COUNT
+	   integer NCOUNT							!NTEGER BCMAX1,BCMAX2,BCMAX3,BCMAX4,BCMAX5,BCMAX6,BCMAXN
+       DOUBLE PRECISION TIME
+       DOUBLE PRECISION STD,RES,TEND,DT,VMEAN
+       CHARACTER FNAME*5,ONAME*20,CMNT*25
+	   CHARACTER FNAMESTEP*5
+
+!*     INTEGER NE,NP,NOP
+!*     INTEGER NBC1,NBC2,NBC3,NBCN
+!*     INTEGER NNBC1,NNBC2,NNBC3,NNBCN
+!*     DOUBLE PRECISION RE,TY,MM
+!*     DOUBLE PRECISION CORD,EMM,LMM,ILMM,EKX,EKY,EHX,EHY,ESS
+!*     DOUBLE PRECISION VX0,VX1,VY0,VY1,PR0,PR1
+!*     DOUBLE PRECISION VVX,VVY,XX
+!*     DOUBLE PRECISION VBC1,VBC2,VBC3,VBCN
+!*     DOUBLE PRECISION EB,EC,AR
+
+       REAL time0,time1,cpu,cpu0,cpu1,dtime
+
+       dimension time0(2),time1(2)
+
+!*  Title Page  *
+      CALL TITLE
+
+      STD=1.0D-08
+
+!*  Model Parameters for PTT Model  *
+      CALL INPUT1
+
+!*  Mesh Data  *
+      CALL INPUT2(DT)
+
+!*  Initial Data  *
+      CALL INPUT3(TIME,NP)
+
+!*  Boundary Conditions  *
+      CALL INPUT4(VMEAN)
+
+      WRITE(*,*) ' Enter Final Time: '
+      READ(5,*) TEND
+
+      WRITE(*,*) ' Enter Output Data File Name: '
+      READ(5,*) ONAME
+
+!**************************
+!* Rewrite here 10/10/27  *
+!* ADDED 10/10/20         *
+!**************************
+
+!*	  WRITE(*,*) ' Enter Output Data File Name: ' 
+!*	  WRITE(*,*) ' (uo to 5 characters)          : '
+!*	  READ(5,*) FNAMESTEP
+
+!*	  DO I=1,5
+!*	  IF(FNAMESTEP(I:I).EQ.' ') THEN
+!*		FNAMESTEP(I:I)='0'
+!*		END IF
+!*		END DO
+
+
+!*	  WRITE(*,*) ' Enter Output Interval (step): '
+!*	  read(5,*) INTVAL
+
+      WRITE(*,*) ' Enter Comment within 25 Letters: '
+      READ(5,*) CMNT
+	  
+	  
+
+
+!*  Information  *
+      CALL INFO(NE,NP,DT,TIME,TEND,ONAME,CMNT)
+
+!*  Beginning of Measurement of CPU Time
+      cpu0=dtime(time0)
+
+!*  Calculate Element Matrices  *
+      DO 10 I=1,NP
+        LMM(I) = 0.D0
+   10 CONTINUE
+
+      DO 20 I=1,NE
+        CALL MKMTR(I)
+   20 CONTINUE
+
+!*  Inverse Matrix of LMM
+      DO 30 I=1,NP
+        ILMM(I) = 1.D0 / LMM(I)
+   30 CONTINUE
+
+!*  Time Loop Begins  *
+
+      NCOUNT = 0
+  999 TIME = TIME + DT
+      NCOUNT = NCOUNT + 1
+	  COUNT2 = COUNT2 + 1
+
+      IF (NCOUNT.EQ.COUNT) THEN
+        WRITE(*,*) TIME,RES
+        NCOUNT = 0
+      ENDIF
+
+!***** STEP 1a/1b *****
+      CALL STEP1(DT)
+
+!***** STEP 2 *****
+      CALL STEP2(DT)
+
+!***** STEP 3 *****
+      CALL STEP3(DT)
+
+!*  Convergence Check  *
+      CALL CONV(RES,NP,VMEAN)
+
+
+!***** OUTPUT *****
+!***** EXCHANGE THIS PART DEPENDING ON OUTPUT CONDITION *************
+
+   IF ((TIME.LT.TEND).AND.(RES.GT.STD)) THEN
+   !*IF (TIME.LT.TEND) THEN
+
+	!*  Update Calculated Data  *
+        CALL UPDATE(NP)
+        GOTO 999
+      ELSE
+
+	!* Output Results (Output the final state) *
+        CALL OUTPUT(ONAME,CMNT,NP,TIME)
+      END IF
+
+      WRITE(*,*) 'All Done'
+
+!********************************************************************
+
+
+!***** OUTPUTSTEP*****
+!***** EXCHANGE THIS PART DEPENDING ON OUTPUT CONDITION *************
+
+		!*IF ((TIME.LT.TEND).AND.(RES.GT.STD)) THEN
+!*     IF (TIME.LT.TEND) THEN
+
+!*		Update Calculated Data Per Step (added 10/10/27)
+!*		CALL UPDATE_STEP(NE,NP)
+
+!*		if (COUNT2.EQ.INTVAL) THEN
+!*			NF=NF+1
+!*			COUNT2=0
+!*			call output_step(FNAMESTEP,CMNT,NE,NP,TIME,NF,DT)
+!*		END IF
+
+!*			GOTO 999
+!*		ELSE
+
+!*  Output Results (Output interval states)
+!*		call output_step(FNAMESTEP,CMNT,NE,NP,TIME,NF,DT)
+
+!*		END IF
+
+!*********************************************************************
+
+
+!*  Output CPU Time  *
+      cpu1= dtime(time1)
+      cpu = cpu1
+      write(*,*) 'CPU Time: ',cpu,' [s]'
+
+	  write(*,*) 'ALL DONE'
+
+      STOP
+      END 
+
+
+!*****************************************
+!*  Rewrite time loop (not use goto)     *
+!*  Last Modified : OCT 10,2010          *
+!*****************************************
+! matigatterukamo sirenai
+
+
+
+!*********************************
+!*  Display Title Page           *
+!*  Last Modified : OCT 10,2010  *
+!*********************************
+
+      SUBROUTINE TITLE
+
+      WRITE(*,*) '***************************************************'
+      WRITE(*,*) '*                                                 *'
+      WRITE(*,*) '*  2-Dimensional HerschelBulkley Flow Simulator   *'
+      WRITE(*,*) '*                                                 *'
+      WRITE(*,*) '*  Source : hbflow2d-rk.f90                       *'
+      WRITE(*,*) '*  Version: 1.00 (Oct, 2010)                      *'
+      WRITE(*,*) '*                                                 *'
+      WRITE(*,*) '*  Coded by                                       *'
+      WRITE(*,*) '*     Takuro TOKUNAGA,      ###########           *'
+      WRITE(*,*) '*     Yamamoto Laboratory,          ###           *'
+      WRITE(*,*) '*     Osaka University              ###           *'
+      WRITE(*,*) '*                                                 *'
+      WRITE(*,*) '***************************************************'
+
+      RETURN
+      END
+
+
+!*********************************
+!*  Input Model Parameter        *
+!*  Last Modified : AUG 13,2000  *
+!*********************************
+
+     SUBROUTINE INPUT1
+      use parameters !use RE,TY,MM
+      IMPLICIT NONE
+      
+      !DOUBLE PRECISION RE,TY,MM
+
+      WRITE(*,100)
+  100 FORMAT('* Enter Parameter:'/)
+
+
+      WRITE(*,*) ' REYNOLDS NUMBER: '
+      READ(*,*) RE
+
+      WRITE(*,*) ' YIELD STRESS: '
+      READ(*,*) TY
+
+      WRITE(*,*) ' POWER INDEX: '
+      READ(*,*) MM
+
+      RETURN
+
+      STOP
+      END
+
+
+!*********************************
+!*  Input Element Information    *
+!*  Last Modified : AUG 9,1999   *
+!*********************************
+
+      SUBROUTINE INPUT2(DT) 
+        use parameters !NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      IMPLICIT NONE
+
+   
+
+      INTEGER I,N !NE,NP,NOP,EMAX,NMAX
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      DOUBLE PRECISION DT !CORD
+      CHARACTER CMNT*25,MNAME*20
+
+      WRITE(*,100)
+      WRITE(*,110)
+  100 FORMAT(/'[ Mesh Data ]')
+  110 FORMAT('* Enter Mesh File Name:'/)
+
+      READ(5,*) MNAME
+
+      OPEN(UNIT=15, ERR=90, FILE=MNAME, STATUS='OLD')
+
+      READ(15,'(A25)') CMNT
+      WRITE(*,120) CMNT
+  120 FORMAT('>>>> Comment: ',A)
+
+      READ(15,*) NP
+      READ(15,*) NE
+      READ(15,*) DT
+
+!*      dt=dt*0.5d-01
+
+      READ(15,'(A80)')
+      READ(15,*) (N,CORD(N,1),CORD(N,2),I=1,NP)
+      READ(15,'(A80)')
+
+      READ(15,*) (N,NOP(N,1),NOP(N,2),NOP(N,3),I=1,NE)
+
+!*  100 FORMAT(I4,2E15.7/)
+!*  110 FORMAT(4I4/)
+
+      CLOSE(15)
+      RETURN
+
+   90 WRITE(*,130) MNAME
+  130 FORMAT(/'>>>>>> Error (1): Cannot find ',A/)
+
+      STOP
+      END
+
+!*********************************
+!*  Input Initial Conditions     *
+!*  Last Modified : AUG 05,2000  *
+!*********************************
+
+      SUBROUTINE INPUT3(TIME,NPSUB)
+      
+      use parameters !COMMON /V1/ VX1(NMAX),VY1(NMAX)
+      				 !COMMON /V0/ VX0(NMAX),VY0(NMAX)
+				     !COMMON /PR/ PR0(NMAX),PR1(NMAX)
+IMPLICIT NONE
+      INTEGER I,N,NPSUB !NMAX
+      !PARAMETER(NMAX=5000)
+
+      DOUBLE PRECISION TIME
+      CHARACTER CMNT*25,INAME*20
+
+      !DOUBLE PRECISION VX0,VX1,VY0,VY1,PR0,PR1
+
+      WRITE(*,100)
+      WRITE(*,110)
+  100 FORMAT(/'[ Initial Data ]')
+  110 FORMAT('* Enter Initial Data File Name:'/)
+
+      READ(5,*) INAME
+
+      IF ((INAME.EQ.'REST').OR.(INAME.EQ.'rest')) THEN
+
+!*       When Fluid is at Rest at Initial Time
+
+        WRITE(*,120) 'Fluid is at rest.'
+        TIME = 0.D0
+
+        DO 10 I=1,NPSUB
+           VX0(I) = 0.D0
+           VY0(I) = 0.D0
+           PR0(I) = 0.D0
+           VX1(I) = 0.D0
+           VY1(I) = 0.D0
+           PR1(I) = 0.D0
+   10   CONTINUE
+
+      ELSE
+
+        OPEN(UNIT=20, ERR=90, FILE=INAME, STATUS='OLD')
+
+!*  Initial Time  *
+
+        READ(20,'(A25)') CMNT
+        WRITE(*,120) CMNT
+  120   FORMAT('>>>> Comment: ',A)
+
+        READ(20,*) TIME
+
+!*  Initial Data for U,V,P  *
+        READ(20,'(A80)')
+        READ(20,*) (N,VX0(N),VY0(N),PR0(N),I=1,NP)
+        DO 20 I=1,NPSUB
+           VX1(I) = VX0(I)
+           VY1(I) = VY0(I)
+           PR1(I) = PR0(I)
+   20   CONTINUE
+
+      ENDIF
+
+!C  200 FORMAT(I5,3E15.7)
+
+      CLOSE(20)
+      RETURN
+
+   90 WRITE(*,130) INAME
+  130 FORMAT(/'>>>>>> Error (1): Cannot find ',A/)
+
+      STOP
+      END
+
+
+!*********************************
+!*  Input Boundary Conditions    *
+!*  Last Modified : AUG 05,2000  *
+!*********************************
+
+      SUBROUTINE INPUT4(VMEAN)
+     
+
+      use parameters !COMMON /MSH/ NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      				 !COMMON /BC1/ VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)
+				     !COMMON /BC2/ VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)
+				     !COMMON /BC3/ VBC3(BCMAX3),NBC3,NNBC3(BCMAX3)
+				     !COMMON /BCN/ VBCN(BCMAXN),NBCN,NNBCN(BCMAXN,2)
+ IMPLICIT NONE
+      INTEGER I,M,N,N1,N2 !EMAX,NMAX
+      !INTEGER BCMAX1,BCMAX2,BCMAX3,BCMAXN
+      DOUBLE PRECISION LL,X1,X2,Y1,Y2,VMEAN,PG
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX1=500,BCMAX2=500,BCMAX3=200)
+      !PARAMETER(BCMAXN=50)
+
+      !INTEGER NE,NP,NOP
+      !INTEGER NBC1,NBC2,NBC3,NBCN
+      !INTEGER NNBC1,NNBC2,NNBC3,NNBCN
+
+      !DOUBLE PRECISION CORD,VBC1,VBC2,VBC3,VBCN
+
+      CHARACTER CMNT*25,BCNAME*20
+
+
+
+!*     **************************
+!*     *  NBC# : Number of B.C  *
+!*     *  NNBC#: Node Number    *
+!*     *  VBC# : Value          *
+!*     *                        *
+!*     *  # | 1 | 2 | 3 |       *
+!*     * ---+---+---+---+       *
+!*     * var| u | v | p |       *
+!*     *                        *
+!*     ***************************
+
+      WRITE(*,100)
+      WRITE(*,110)
+  100 FORMAT(/'[ Boundary Condition ]')
+  110 FORMAT('* Enter B.C. File Name:'/)
+
+      READ(5,*) BCNAME
+
+      OPEN(UNIT=25, ERR=90, FILE=BCNAME, STATUS='OLD')
+
+      READ(25,'(A25)') CMNT
+      WRITE(*,120) CMNT
+  120 FORMAT('>>>> Comment: ',A)
+
+      READ(25,*) NBC1
+      READ(25,*) NBC2
+      READ(25,*) NBC3
+      READ(25,*) NBCN
+      READ(25,*) VMEAN
+
+!*  B.C. DATA FOR U  *
+      READ(25,'(A80)')
+      READ(25,*) (NNBC1(N),VBC1(N),N=1,NBC1)
+
+!*  B.C. DATA FOR U  *
+      READ(25,'(A80)')
+      READ(25,*) (NNBC2(N),VBC2(N),N=1,NBC2)
+
+!*  B.C. DATA FOR P  *
+      READ(25,'(A80)')
+      READ(25,*) (NNBC3(N),VBC3(N),N=1,NBC3)
+
+!*  NATURAL B.C.  *
+      READ(25,'(A80)')
+      DO 10 I=1,NBCN
+        READ(25,*) N,M,PG
+
+        IF (M.EQ.1) THEN
+          N1 = NOP(N,2)
+          N2 = NOP(N,3)
+
+        ELSE IF (M.EQ.2) THEN
+          N1 = NOP(N,1)
+          N2 = NOP(N,3)
+
+        ELSE IF (M.EQ.3) THEN
+          N1 = NOP(N,1)
+          N2 = NOP(N,2)
+
+        ENDIF
+
+        NNBCN(I,1) = N1
+        NNBCN(I,2) = N2
+
+        X1 = CORD(N1,1)
+        Y1 = CORD(N1,2)
+        X2 = CORD(N2,1)
+        Y2 = CORD(N2,2)
+
+        LL = SQRT( (X1-X2)**2 + (Y1-Y2)**2 )
+        VBCN(I) = PG*LL
+
+   10 CONTINUE
+
+      CLOSE(25)
+      RETURN
+
+   90 WRITE(*,130) BCNAME
+  130 FORMAT(/,'>>>>>> Error (1): Cannot find ',A/)
+
+      STOP
+      END
+
+
+!*********************************
+!*  Output Results               *
+!*  Last Modified : JUL 13,1999  *
+!*********************************
+
+      SUBROUTINE OUTPUT(ONAME,CMNT,NPSB,TIME) !REWRITE NP TO NPSB
+     
+
+      use parameters !COMMON /V1/ VX1(NMAX),VY1(NMAX)
+      			     !COMMON /PR/ PR0(NMAX),PR1(NMAX)
+ IMPLICIT NONE
+      INTEGER N ,NPSB !,NMAX
+      DOUBLE PRECISION TIME
+      CHARACTER ONAME*20,CMNT*25
+      !DOUBLE PRECISION VX1,VY1,PR0,PR1
+      DOUBLE PRECISION TXX1,TXY1,TYY1
+
+      !PARAMETER(NMAX=5000)
+
+      OPEN(UNIT=30, FILE=ONAME, STATUS='UNKNOWN')
+
+!*  Comment, Time
+        WRITE(30,*) CMNT
+        WRITE(30,*) TIME
+
+!*  Data for U,V,P
+        WRITE(30,110)
+        WRITE(30,200) (N,VX1(N),VY1(N),PR1(N),N=1,NP)
+
+  100 FORMAT(E15.7/)
+  110 FORMAT(' ',' NODE    Vx  [m/s]      Vy  [m/s]       p  [Pa]')
+  200 FORMAT(' ',I5,3E15.7E2)
+
+      CLOSE(30)
+
+      RETURN
+      END
+
+
+!*************************************
+!*  Output Results per interval      *
+!*  Last Modified : OCT 20,2010      *
+!*************************************
+
+	subroutine output_step(FNAME1,CMNT,NESB,NPSB,TIME,NFSB,DTSB)
+	use parameters
+
+	IMPLICIT NONE
+      INTEGER N ,NESB,NPSB,DTSB
+      DOUBLE PRECISION TIME
+	  integer l1,l2,l3,NFSB
+      CHARACTER FNAME1*5,ONAME1*20,CMNT*25
+      DOUBLE PRECISION TXX1,TXY1,TYY1
+
+
+	!Update File Name
+		l1=NFSB/100
+		l2=(NFSB-100*l1)/10
+		l3=NFSB-100*l1-10*l2
+		ONAME1=FNAME1//CHAR(48+l1)//CHAR(48+l2)//CHAR(48+l3)//'.dat' !Making File Name
+	
+	!Open File
+      OPEN(UNIT=30, FILE=ONAME1, STATUS='UNKNOWN')
+
+!*  Comment, Time
+        WRITE(30,*) CMNT
+        WRITE(30,*) TIME
+
+!*  Data for U,V,P
+        WRITE(30,110)
+        WRITE(30,200) (N,VX1(N),VY1(N),PR1(N),N=1,NP)
+
+!*  Data for Tij
+        WRITE(30,120)
+        WRITE(30,200) (N,TXX1(N),TXY1(N),TYY1(N),N=1,NP)
+
+
+!*  Data for phi
+        WRITE(30,130)
+        WRITE(30,210) (N,phi(N),N=1,NE)
+
+
+
+
+		100 FORMAT(E15.7/)
+		110 FORMAT(' ',' NODE    Vx  [m/s]      Vy  [m/s]       p  [Pa]')
+		120 FORMAT(' ',' NODE    Txx  [Pa]      Txy  [Pa]       Tyy  [Pa]')
+		130 FORMAT(' ',' NODE    phi  [-]')
+		200 FORMAT(' ',I5,3E15.7E2)
+		210 FORMAT(' ',I5,E15.7E2)
+
+		CLOSE(30)
+
+		RETURN
+		END
+
+!*********************************
+!*  Display Information          *
+!*  Last Modified : AUG 05,2000  *
+!*********************************
+
+	  !REWRITE NE,NP TO NESB,NPSB
+
+      SUBROUTINE INFO(NESB,NPSB,DT,TIME,TEND,ONAME,CMNT)
+	  USE PARAMETERS
+      IMPLICIT NONE
+
+      INTEGER NESB,NPSB
+      DOUBLE PRECISION DT,TIME,TEND
+      !DOUBLE PRECISION RE,TY,MM
+      CHARACTER ONAME*20,CMNT*25
+
+      !COMMON /PRM/  RE,TY,MM
+
+      WRITE(*,50)
+      WRITE(*,100) NPSB,NESB
+      WRITE(*,110) TIME,TEND,DT
+      WRITE(*,60)
+      WRITE(*,200) RE
+      WRITE(*,210) TY
+      WRITE(*,220) MM
+      WRITE(*,300) CMNT
+      WRITE(*,310) ONAME
+
+   50 FORMAT(' '/'*** Condition for Calculation ***'/)
+   60 FORMAT(' ','*** Test Fluid ***'/)
+  100 FORMAT(' ',I4,'nodes, ',I4,'element'/)
+  110 FORMAT(' ','Start Time:',E15.7, ', Final Time:',E15.7/,' ','Incriment :',E15.7/)
+  200 FORMAT(' ','Reynolds Number: ',F10.3)
+  210 FORMAT(' ','Non-dimensional Yield Stress: ',F10.3)
+  220 FORMAT(' ','Power-Index: ',F10.3)
+  300 FORMAT(' ','Comment: ',A)
+  310 FORMAT(' ','Output File: ',A//)
+
+      RETURN
+      END
+
+
+!*********************************
+!*  Convergence Check            *
+!*  Last Modified : NOV 11,1999  *
+!*********************************
+
+!REWRITE RES NP VMEAN TO RESSUB NPSUB VMEANSUB
+
+      SUBROUTINE CONV(RESSUB,NPSUB,VMEANSUB)
+    
+      use parameters !COMMON /V0/ VX0(NMAX),VY0(NMAX)
+      				 !COMMON /V1/ VX1(NMAX),VY1(NMAX)
+  IMPLICIT NONE
+      INTEGER I,NPSUB !,NMAX
+      DOUBLE PRECISION RESSUB,TMP,V0,V1,VMEANSUB
+
+      !PARAMETER(NMAX=5000)
+
+      !DOUBLE PRECISION VX0,VY0,VX1,VY1
+
+
+      RESSUB = 0.0
+      DO 10 I=1,NPSUB
+        V0 = SQRT(VX0(I)**2 + VY0(I)**2)
+        V1 = SQRT(VX1(I)**2 + VY1(I)**2)
+        TMP = DABS(V1-V0)/VMEANSUB
+        RESSUB = MAX(RESSUB,TMP)
+   10 CONTINUE
+
+      RETURN
+      END
+
+
+!*********************************
+!*  Calculate Matrices           *
+!*  Last Modified : AUG 9,1999   *
+!*********************************
+
+      SUBROUTINE MKMTR(ELEM)
+    
+      use parameters !COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      				 !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+				     !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+				     !COMMON /MTR3/ EMM(EMAX,3)
+				     !COMMON /MTR4/ ESS(EMAX,3,3)
+				     !COMMON /MTR5/ LMM(NMAX),ILMM(NMAX)
+				     !COMMON /MTR6/ EB(EMAX,3),EC(EMAX,3),AR(EMAX)
+  IMPLICIT NONE
+      INTEGER I,J,K,N,N1,N2,N3 !,EMAX,NMAX,
+	  INTEGER ELEM
+      DOUBLE PRECISION AREA,AREA02,AREA3,AREA12,A2
+      DOUBLE PRECISION B(3),C(3),DD(3,3)
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+
+      !INTEGER NE,NP,NOP
+      DOUBLE PRECISION X1,X2,X3,Y1,Y2,Y3 !,CORD
+      !DOUBLE PRECISION EMM,LMM,ILMM,EHX,EHY,EKX,EKY,ESS
+      !DOUBLE PRECISION EB,EC,AR
+
+      
+
+!*  Initialization  *
+      DO 10 I=1,3
+        EMM(ELEM,I) = 0.D0
+        DO 20 J=1,3
+          EHX(ELEM,I,J) = 0.D0
+          EHY(ELEM,I,J) = 0.D0
+          ESS(ELEM,I,J) = 0.D0
+          DO 30 K=1,3
+            EKX(ELEM,I,J,K) = 0.D0
+            EKY(ELEM,I,J,K) = 0.D0
+   30     CONTINUE
+   20   CONTINUE
+   10 CONTINUE
+
+      DD(1,1) = 2.0D0
+      DD(1,2) = 1.0D0
+      DD(1,3) = 1.0D0
+
+      DD(2,1) = 1.0D0
+      DD(2,2) = 2.0D0
+      DD(2,3) = 1.0D0
+
+      DD(3,1) = 1.0D0
+      DD(3,2) = 1.0D0
+      DD(3,3) = 2.0D0
+
+!*  Calculate Area of Element  *
+!*     n1 -- number of 1st node
+!*     n2 -- number of 2nd node
+!*     n3 -- number of 3rd node
+!*     area -- area of element
+
+      N1 = NOP(ELEM,1)
+      N2 = NOP(ELEM,2)
+      N3 = NOP(ELEM,3)
+
+      X1 = CORD(N1,1)
+      Y1 = CORD(N1,2)
+
+      X2 = CORD(N2,1)
+      Y2 = CORD(N2,2)
+
+      X3 = CORD(N3,1)
+      Y3 = CORD(N3,2)
+
+      AREA02 = X1*(Y2-Y3) + X2*(Y3-Y1) + X3*(Y1-Y2)
+      AREA = 0.5D0*AREA02
+
+      IF (AREA.LE.0.D0) THEN
+        WRITE(*,*) 'ERROR: Area is less than zero (',ELEM, ')'
+        STOP
+      END IF
+
+      A2      = 1.0D0 / AREA02
+      AREA3  = AREA / 3.0D0
+      AREA12 = AREA / 12.0D0
+
+!*  Differential of Shape Function  *
+      B(1) = (Y2-Y3) * A2
+      B(2) = (Y3-Y1) * A2
+      B(3) = (Y1-Y2) * A2
+      C(1) = (X3-X2) * A2
+      C(2) = (X1-X3) * A2
+      C(3) = (X2-X1) * A2
+
+!C
+      AR(ELEM) = AREA
+      EB(ELEM,1) = B(1)
+      EB(ELEM,2) = B(2)
+      EB(ELEM,3) = B(3)
+      EC(ELEM,1) = C(1)
+      EC(ELEM,2) = C(2)
+      EC(ELEM,3) = C(3)
+!C
+
+!*  Calculate Matrices  *
+!*     [Hx], [Hy]
+
+      DO 100 I=1,3
+        DO 110 J=1,3
+          EHX(ELEM,I,J) = AREA3 * B(J)
+          EHY(ELEM,I,J) = AREA3 * C(J)
+  110   CONTINUE
+  100 CONTINUE
+
+!*     [Kxx], [Kyy]
+
+      DO 200 I=1,3
+        DO 210 J=1,3
+          DO 220 K=1,3
+            EKX(ELEM,I,J,K) = AREA12*DD(I,J)*B(K)
+            EKY(ELEM,I,J,K) = AREA12*DD(I,J)*C(K)
+  220     CONTINUE
+  210   CONTINUE
+  200 CONTINUE
+
+!*      [S]
+
+       DO 300 I=1,3
+         DO 310 J=1,3
+           ESS(ELEM,I,J) = AREA*(B(I)*B(J)+C(I)*C(J))
+  310    CONTINUE
+  300  CONTINUE
+
+!*       _
+!*      [M] (lumped mass matrix)
+!*
+       DO 400 I=1,3
+         EMM(ELEM,I) = AREA3
+         N = NOP(ELEM,I)
+         LMM(N) = LMM(N) + AREA3
+  400  CONTINUE
+!*
+       RETURN
+       END
+
+
+!*********************************
+!*  Step 1                       *
+!*  Last Modified : AUG 05,2000  *
+!*********************************
+
+      SUBROUTINE STEP1(DT)
+   
+	  use parameters
+	  !COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      !COMMON /PRM/  RE,TY,MM
+      !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+      !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+      !COMMON /MTR3/ EMM(EMAX,3)
+      !COMMON /MTR4/ ESS(EMAX,3,3)
+      !COMMON /MTR5/ LMM(NMAX),ILMM(NMAX)
+      !COMMON /V0/   VX0(NMAX),VY0(NMAX)
+      !COMMON /V1/   VX1(NMAX),VY1(NMAX)
+      !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+      !COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+      !COMMON /BC1/  VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)
+      !COMMON /BC2/  VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)
+   IMPLICIT NONE
+      
+      INTEGER I,N,N_F !,EMAX,NMAX
+      !INTEGER BCMAX1,BCMAX2
+      DOUBLE PRECISION C1,DT,DDT
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX1=500,BCMAX2=500)
+
+!REWRITE NE ETC.. TO NESUB
+
+      !INTEGER NE,NP,NOP,NBC1,NBC2,NBC4,NBC5,NBC6
+      !INTEGER NNBC1,NNBC2,NNBC4,NNBC5,NNBC6
+      !DOUBLE PRECISION RE,TY,MM
+      !DOUBLE PRECISION CORD,EHX,EHY,EKX,EKY,EMM,ESS,LMM,ILMM
+      !DOUBLE PRECISION VX0,VY0,VX1,VY1,PR0,PR1
+      !DOUBLE PRECISION VVX,VVY
+      !DOUBLE PRECISION VBC1,VBC2
+
+      
+
+!*  Step 1(a)  *
+!  Calculate Velocity  *
+      C1 = 0.5D0*DT/RE
+      DDT = 0.5D0*DT
+
+
+!**********************************
+!* Choose RVVX or RVVX1 10/10/26  *
+!**********************************
+
+!*  Calculate R.H.S. Vector (U)
+      CALL RVVX()
+
+
+!**********************************
+!* Choose RVVY or RVVY1 10/10/26  *
+!**********************************
+
+!*  Calculate R.H.S. Vector (V)
+      CALL RVVY()
+
+!*  B.C. (u)  *
+      DO 100 I=1,NBC1
+        N = NNBC1(I)
+        VX0(N) = VBC1(I)
+  100 CONTINUE
+
+!*  Explicit Method
+      DO 10 I=1,NP
+        VX1(I)  = VX0(I) + C1*VVX(I)*ILMM(I)
+   10 CONTINUE
+
+!*  B.C. (v)  *
+      DO 110 I=1,NBC2
+        N = NNBC2(I)
+        VY0(N) = VBC2(I)
+  110 CONTINUE
+
+!*  Explicit Method
+      DO 20 I=1,NP
+        VY1(I)  = VY0(I) + C1*VVY(I)*ILMM(I)
+   20 CONTINUE
+
+
+!*  Step 1(b)  *
+!*  Calculate Velocity  *
+      C1 = DT/RE
+
+!*  Calculate R.H.S. Vector
+      CALL RVVX()
+
+!*  Calculate R.H.S. Vector
+      CALL RVVY()
+
+!*  B.C. (u)  *
+      DO 300 I=1,NBC1
+        N = NNBC1(I)
+        VX0(N) = VBC1(I)
+  300 CONTINUE
+
+!*  Explicit Method
+      DO 30 I=1,NP
+        VX1(I) = VX0(I) + C1*VVX(I)*ILMM(I)
+   30 CONTINUE
+
+!*  B.C. (v)  *
+      DO 310 I=1,NBC2
+        N = NNBC2(I)
+        VY0(N) = VBC2(I)
+  310 CONTINUE
+
+!*  Explicit Method
+      DO 40 I=1,NP
+        VY1(I) = VY0(I) + C1*VVY(I)*ILMM(I)
+   40 CONTINUE
+
+  
+
+!* added 10/10/25
+!* imitation of p.11
+!* have to write here something relate to model
+!* delete '!' under here if program has been completed
+
+!*****************************************************
+
+!* Calculate Stress (Thixotoropic Fluids)
+	
+	CALL RHSV_FLUID(DT)
+	
+!* B.C. (FLUID)
+!*	DO I=1,NBCF
+!*		N=NNBCF(I)
+!*		phi(N) = VBFC(I)
+!*		END DO
+
+	CALL RHSV_T(DT)
+		DO I=1,NP
+			TXX1_F(I) = TXX0(I)
+			TXY1_F(I) = TXY0(I)
+			TYY1_F(I) = TYY0(I)
+			END DO
+
+!* B.C. (Tij)
+	DO I=1,NBC4_F
+	N_F = NNBC4_F(I)
+	TXX1_F(N_F) = VBC4_F(I)
+	END DO
+
+	DO I=1,NBC5_F
+	N_F = NNBC5_F(I)
+	TXY1_F(N_F) = VBC5_F(I)
+	END DO
+	
+	DO I=1,NBC6_F
+	N_F = NNBC6_F(I)
+	TYY1_F(N_F) = VBC6_F(I)
+	END DO
+
+
+
+	RETURN
+	END
+
+!************************************
+!*  Step 2: Pressure (Poisson Eq.)  *
+!*  Last Modified : AUG 19,1999     *
+!************************************
+
+      SUBROUTINE STEP2(DT)
+  
+
+      use parameters !COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      				 !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+  				     !COMMON /DP/   XX(NMAX)
+    IMPLICIT NONE
+      DOUBLE PRECISION DT
+      INTEGER I !,EMAX,NMAX
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+
+      !INTEGER NE,NP,NOP
+      !DOUBLE PRECISION CORD,PR0,PR1,XX
+
+     
+
+!**********************************************
+!*  CG Method Routine                         *
+!*     EPS : Condition for Convergence Check  *
+!*     LMAX: Maximum Number of Iteration      *
+!*     XX  : Solution                         *
+!**********************************************
+
+!C     LMAX = 1000
+      CALL CGPOIS(DT)
+
+!C  Update Pressure
+      DO 20 I=1,NP
+        PR1(I) = XX(I)
+   20 CONTINUE
+
+      RETURN
+      END
+
+
+!***********************************
+!*  Step 3: Velocity Correction    *
+!*  Last Modified : AUG 05, 2000   *
+!***********************************
+
+      SUBROUTINE STEP3(DT)
+     
+      use parameters
+					!COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+      				!COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+      				!COMMON /MTR5/ LMM(NMAX),ILMM(NMAX)
+      				!COMMON /V1/   VX1(NMAX),VY1(NMAX)
+      				!COMMON /PR/   PR0(NMAX),PR1(NMAX)
+      				!COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+      				!COMMON /BC1/  VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)
+      				!COMMON /BC2/  VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)
+ IMPLICIT NONE
+
+      INTEGER I,J,N,N1,N2 !,EMAX,NMAX
+      !INTEGER BCMAX1,BCMAX2
+      DOUBLE PRECISION DT
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX1=500,BCMAX2=500)
+
+      !INTEGER NE,NP,NOP,NBC1,NBC2,NNBC1,NNBC2
+      !DOUBLE PRECISION CORD,EHX,EHY,LMM,ILMM
+      !DOUBLE PRECISION VX1,VY1,PR0,PR1
+      !DOUBLE PRECISION VVX,VVY
+      !DOUBLE PRECISION VBC1,VBC2
+
+!*  Initialization  *
+      DO 10 I=1,NP
+        VVX(I) = 0.D0
+        VVY(I) = 0.D0
+   10 CONTINUE
+
+!*  Calculate Vector  *
+      DO 100 N=1,NE
+        DO 110 I=1,3
+          N1 = NOP(N,I)
+          DO 120 J=1,3
+            N2 = NOP(N,J)
+            VVX(N1) = VVX(N1) + EHX(N,I,J)*PR1(N2)
+            VVY(N1) = VVY(N1) + EHY(N,I,J)*PR1(N2)
+  120     CONTINUE
+  110   CONTINUE
+  100 CONTINUE
+
+      DO 300 I=1,NP
+        VX1(I) = VX1(I) - DT*VVX(I)*ILMM(I)
+        VY1(I) = VY1(I) - DT*VVY(I)*ILMM(I)
+  300 CONTINUE
+
+!*  Boundary Conditions  *
+      DO 200 I=1,NBC1
+        VX1(NNBC1(I)) = VBC1(I)
+  200 CONTINUE
+
+      DO 210 I=1,NBC2
+        VY1(NNBC2(I)) = VBC2(I)
+  210 CONTINUE
+
+      RETURN
+      END
+
+
+!************************************************
+!*  Calculate R.H.S. Vector for Eq. Motion (u)  *
+!*  Step 1                                      *
+!*  Last Modified : OCT 10, 2010                *
+!************************************************
+
+!************************************************
+!*	RWRITE THIS PART 10/10/22                   *
+!************************************************
+
+
+      SUBROUTINE RVVX()
+ 
+
+      use parameters
+					!COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+				    !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+				    !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+				    !COMMON /MTR4/ ESS(EMAX,3,3)
+				    !COMMON /V1/   VX1(NMAX),VY1(NMAX)
+				    !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+				    !COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+				    !COMMON /BC1/  VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)
+				    !COMMON /PRM/  RE,TY,MM
+      				!COMMON /MTR6/ EB(EMAX,3),EC(EMAX,3),AR(EMAX)
+     IMPLICIT NONE      
+      INTEGER I,J,K,N,N1,N2,N3
+      !INTEGER EMAX,NMAX,BCMAX1
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX1=500)
+
+      !INTEGER NE,NP,NOP,NBC1,NNBC1
+      !DOUBLE PRECISION CORD,EHX,EHY,EKX,EKY,ESS
+      !DOUBLE PRECISION VX1,VY1
+      !DOUBLE PRECISION PR0,PR1
+      !DOUBLE PRECISION VVX,VVY,VBC1
+      !DOUBLE PRECISION RE,TY,MM
+      !DOUBLE PRECISION EB,EC,AR
+      DOUBLE PRECISION KK,II,REI
+      DOUBLE PRECISION DUDX,DVDY,DUYVX
+
+
+!*  Initialization
+      DO 500 I=1,NP
+        VVX(I) = 0.D0
+  500 CONTINUE
+
+      REI = 1.D0/RE
+
+!*  Calculate R.H.S. Vector
+      DO 10 N=1,NE
+
+        N1 = NOP(N,1)
+        N2 = NOP(N,2)
+        N3 = NOP(N,3)
+
+        DUDX = EB(N,1)*VX1(N1) + EB(N,2)*VX1(N2) + EB(N,3)*VX1(N3)
+        DVDY = EC(N,1)*VY1(N1) + EC(N,2)*VY1(N2) + EC(N,3)*VY1(N3)
+        DUYVX = EC(N,1)*VX1(N1) + EC(N,2)*VX1(N2) + EC(N,3)*VX1(N3) + EB(N,1)*VY1(N1) + EB(N,2)*VY1(N2) + EB(N,3)*VY1(N3)
+
+        II = DSQRT(2.D0*DUDX*DUDX + 2.D0*DVDY*DVDY + DUYVX*DUYVX)	!*SECOND INVARIANT OF THE RATE-OF-STRAIN TENSOR(?) 10/10/22
+
+!*       If II=0 then TAU_{ij} = 0
+
+        IF (II.NE.0) THEN
+          KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II + khb*((1/II)**(nhb-1)) + TY*(1/II)) !* ABOUT STRESS(?) REWRITE HERE 10/10/22
+          DO 20 I=1,3
+            N1 = NOP(N,I)
+            DO 30 J=1,3
+              N2 = NOP(N,J)
+              VVX(N1) = VVX(N1) - REI*ESS(N,I,J)*VX1(N2) - KK *ESS(N,I,J)*VX1(N2)
+
+              DO 40 K=1,3
+                N3 = NOP(N,K)
+                VVX(N1) = VVX(N1) - EKX(N,I,J,K)*VX1(N2)*VX1(N3) - EKY(N,I,J,K)*VY1(N2)*VX1(N3)
+   40         CONTINUE
+   30       CONTINUE
+   20     CONTINUE
+        END IF 
+   10 CONTINUE
+
+!*  B.C.  *
+      DO 100 I=1,NBC1
+        VVX(NNBC1(I)) = 0.D0
+  100 CONTINUE
+
+      RETURN
+      END
+
+
+!* have to rewrite SUBROUTINE RVVX1,RVVY1
+
+!************************************************
+!*  Calculate R.H.S. Vector for Eq. Motion (u)  *
+!*  Step 1                                      *
+!*  Last Modified : OCT 26, 2010                *
+!************************************************
+
+!**************************************************************
+!*	FOR i.THE MODEL. USE Tij from Subroutine RHSV_FLUID(DT)   *
+!*  Last Modified : OCT 26, 2010                              *
+!**************************************************************
+
+
+      SUBROUTINE RVVX1()
+ 
+
+      use parameters
+					!COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+				    !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+				    !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+				    !COMMON /MTR4/ ESS(EMAX,3,3)
+				    !COMMON /V1/   VX1(NMAX),VY1(NMAX)
+				    !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+				    !COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+				    !COMMON /BC1/  VBC1(BCMAX1),NBC1,NNBC1(BCMAX1)
+				    !COMMON /PRM/  RE,TY,MM
+      				!COMMON /MTR6/ EB(EMAX,3),EC(EMAX,3),AR(EMAX)
+     IMPLICIT NONE      
+      INTEGER I,J,K,N,N1,N2,N3
+      !INTEGER EMAX,NMAX,BCMAX1
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX1=500)
+
+      !INTEGER NE,NP,NOP,NBC1,NNBC1
+      !DOUBLE PRECISION CORD,EHX,EHY,EKX,EKY,ESS
+      !DOUBLE PRECISION VX1,VY1
+      !DOUBLE PRECISION PR0,PR1
+      !DOUBLE PRECISION VVX,VVY,VBC1
+      !DOUBLE PRECISION RE,TY,MM
+      !DOUBLE PRECISION EB,EC,AR
+      DOUBLE PRECISION KK,II,REI
+      DOUBLE PRECISION DUDX,DVDY,DUYVX
+
+
+!*  Initialization
+      DO 500 I=1,NP
+        VVX(I) = 0.D0
+  500 CONTINUE
+
+      REI = 1.D0/RE
+
+!*  Calculate R.H.S. Vector
+      DO 10 N=1,NE
+
+        N1 = NOP(N,1)
+        N2 = NOP(N,2)
+        N3 = NOP(N,3)
+
+        DUDX = EB(N,1)*VX1(N1) + EB(N,2)*VX1(N2) + EB(N,3)*VX1(N3)
+        DVDY = EC(N,1)*VY1(N1) + EC(N,2)*VY1(N2) + EC(N,3)*VY1(N3)
+        DUYVX = EC(N,1)*VX1(N1) + EC(N,2)*VX1(N2) + EC(N,3)*VX1(N3) + EB(N,1)*VY1(N1) + EB(N,2)*VY1(N2) + EB(N,3)*VY1(N3)
+
+        II = DSQRT(2.D0*DUDX*DUDX + 2.D0*DVDY*DVDY + DUYVX*DUYVX)	!*SECOND INVARIANT OF THE RATE-OF-STRAIN TENSOR(?) 10/10/22
+
+!*       If II=0 then TAU_{ij} = 0
+
+        IF (II.NE.0) THEN
+          KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II + khb*((1/II)**(nhb-1)) + TY*(1/II)) !* ABOUT STRESS(?) REWRITE HERE 10/10/22
+          DO 20 I=1,3
+            N1 = NOP(N,I)
+            DO 30 J=1,3
+              N2 = NOP(N,J)
+              VVX(N1) = VVX(N1) - REI*ESS(N,I,J)*VX1(N2) - KK *ESS(N,I,J)*VX1(N2)
+
+              DO 40 K=1,3
+                N3 = NOP(N,K)
+                VVX(N1) = VVX(N1) - EKX(N,I,J,K)*VX1(N2)*VX1(N3) - EKY(N,I,J,K)*VY1(N2)*VX1(N3)
+   40         CONTINUE
+   30       CONTINUE
+   20     CONTINUE
+        END IF 
+   10 CONTINUE
+
+!*  B.C.  *
+      DO 100 I=1,NBC1
+        VVX(NNBC1(I)) = 0.D0
+  100 CONTINUE
+
+      RETURN
+      END
+
+
+!************************************************
+!*  Calculate R.H.S. Vector for Eq. Motion (v)  *
+!*  Step 1                                      *
+!*  Last Modified : FEB 05, 2000                *
+!************************************************
+
+      SUBROUTINE RVVY()
+
+
+      use parameters  !COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+				      !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+				      !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+				      !COMMON /MTR4/ ESS(EMAX,3,3)
+				      !COMMON /V1/   VX1(NMAX),VY1(NMAX)
+				      !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+				      !COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+				      !COMMON /BC2/  VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)
+				      !COMMON /PRM/  RE,TY,MM
+				      !COMMON /MTR6/ EB(EMAX,3),EC(EMAX,3),AR(EMAX)
+      IMPLICIT NONE
+      INTEGER I,J,K,N,N1,N2,N3
+      !INTEGER EMAX,NMAX,BCMAX2
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX2=500)
+
+      !INTEGER NE,NP,NOP,NBC2,NNBC2
+      !DOUBLE PRECISION CORD,EHX,EHY,EKX,EKY,ESS
+      !DOUBLE PRECISION VX1,VY1,PR0,PR1
+      !DOUBLE PRECISION VVX,VVY,VBC2
+      !DOUBLE PRECISION RE,TY,MM
+      !DOUBLE PRECISION EB,EC,AR
+      DOUBLE PRECISION KK,II,REI
+      DOUBLE PRECISION DUDX,DVDY,DUYVX
+
+
+
+!*  Initialization
+      DO 500 I=1,NP
+        VVY(I) = 0.D0
+  500 CONTINUE
+
+      REI = 1.D0/RE
+
+!*  Calculate R.H.S. Vector
+      DO 10 N=1,NE
+        N1 = NOP(N,1)
+        N2 = NOP(N,2)
+        N3 = NOP(N,3)
+
+        DUDX = EB(N,1)*VX1(N1) + EB(N,2)*VX1(N2) + EB(N,3)*VX1(N3)
+        DVDY = EC(N,1)*VY1(N1) + EC(N,2)*VY1(N2) + EC(N,3)*VY1(N3)
+        DUYVX = EC(N,1)*VX1(N1) + EC(N,2)*VX1(N2) + EC(N,3)*VX1(N3) + EB(N,1)*VY1(N1) + EB(N,2)*VY1(N2) + EB(N,3)*VY1(N3)
+
+        II = SQRT(2.D0*DUDX*DUDX + 2.D0*DVDY*DVDY + DUYVX*DUYVX)
+!*       If II=0 then TAU_{ij} = 0
+
+        IF (II.NE.0) THEN
+!* original 		  KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II 
+!* no description about myu compared to (6 in the paper) 
+          KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II + khb*((1/II)**(nhb-1)) + TY*(1/II)) !* ABOUT STRESS(?) REWRITE HERE 10/10/22
+          DO 20 I=1,3
+            N1 = NOP(N,I)
+            DO 30 J=1,3
+              N2 = NOP(N,J)
+              VVY(N1) = VVY(N1) - REI*ESS(N,I,J)*VY1(N2) - KK *ESS(N,I,J)*VY1(N2)
+              DO 40 K=1,3
+                N3 = NOP(N,K)
+                VVY(N1) = VVY(N1) - EKX(N,I,J,K)*VX1(N2)*VY1(N3) - EKY(N,I,J,K)*VY1(N2)*VY1(N3)
+   40         CONTINUE
+   30       CONTINUE
+   20     CONTINUE
+        END IF
+
+   10 CONTINUE
+
+!*  B.C.  *
+      DO 100 I=1,NBC2
+        VVY(NNBC2(I)) = 0.D0
+  100 CONTINUE
+
+      RETURN
+      END
+
+
+
+
+!************************************************
+!*  Calculate R.H.S. Vector for Eq. Motion (v)  *
+!*  Step 1                                      *
+!*  Last Modified : OCT 26, 2010                *
+!************************************************
+
+!**************************************************************
+!*	FOR i.THE MODEL. USE Tij from Subroutine RHSV_FLUID(DT)   *
+!*  Last Modified : OCT 26, 2010                              *
+!**************************************************************
+
+      SUBROUTINE RVVY1()
+
+
+      use parameters  !COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+				      !COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+				      !COMMON /MTR2/ EKX(EMAX,3,3,3),EKY(EMAX,3,3,3)
+				      !COMMON /MTR4/ ESS(EMAX,3,3)
+				      !COMMON /V1/   VX1(NMAX),VY1(NMAX)
+				      !COMMON /PR/   PR0(NMAX),PR1(NMAX)
+				      !COMMON /VEC1/ VVX(NMAX),VVY(NMAX)
+				      !COMMON /BC2/  VBC2(BCMAX2),NBC2,NNBC2(BCMAX2)
+				      !COMMON /PRM/  RE,TY,MM
+				      !COMMON /MTR6/ EB(EMAX,3),EC(EMAX,3),AR(EMAX)
+      IMPLICIT NONE
+      INTEGER I,J,K,N,N1,N2,N3
+      !INTEGER EMAX,NMAX,BCMAX2
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX2=500)
+
+      !INTEGER NE,NP,NOP,NBC2,NNBC2
+      !DOUBLE PRECISION CORD,EHX,EHY,EKX,EKY,ESS
+      !DOUBLE PRECISION VX1,VY1,PR0,PR1
+      !DOUBLE PRECISION VVX,VVY,VBC2
+      !DOUBLE PRECISION RE,TY,MM
+      !DOUBLE PRECISION EB,EC,AR
+      DOUBLE PRECISION KK,II,REI
+      DOUBLE PRECISION DUDX,DVDY,DUYVX
+
+
+
+!*  Initialization
+      DO 500 I=1,NP
+        VVY(I) = 0.D0
+  500 CONTINUE
+
+      REI = 1.D0/RE
+
+!*  Calculate R.H.S. Vector
+      DO 10 N=1,NE
+        N1 = NOP(N,1)
+        N2 = NOP(N,2)
+        N3 = NOP(N,3)
+
+        DUDX = EB(N,1)*VX1(N1) + EB(N,2)*VX1(N2) + EB(N,3)*VX1(N3)
+        DVDY = EC(N,1)*VY1(N1) + EC(N,2)*VY1(N2) + EC(N,3)*VY1(N3)
+        DUYVX = EC(N,1)*VX1(N1) + EC(N,2)*VX1(N2) + EC(N,3)*VX1(N3) + EB(N,1)*VY1(N1) + EB(N,2)*VY1(N2) + EB(N,3)*VY1(N3)
+
+        II = SQRT(2.D0*DUDX*DUDX + 2.D0*DVDY*DVDY + DUYVX*DUYVX)
+!*       If II=0 then TAU_{ij} = 0
+
+        IF (II.NE.0) THEN
+!* original 		  KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II 
+!* no description about myu compared to (6 in the paper) 
+          KK = REI*(TY*(1.D0-DEXP(-MM*II)) / II + khb*((1/II)**(nhb-1)) + TY*(1/II)) !* ABOUT STRESS(?) REWRITE HERE 10/10/22
+          DO 20 I=1,3
+            N1 = NOP(N,I)
+            DO 30 J=1,3
+              N2 = NOP(N,J)
+              VVY(N1) = VVY(N1) - REI*ESS(N,I,J)*VY1(N2) - KK *ESS(N,I,J)*VY1(N2)
+              DO 40 K=1,3
+                N3 = NOP(N,K)
+                VVY(N1) = VVY(N1) - EKX(N,I,J,K)*VX1(N2)*VY1(N3) - EKY(N,I,J,K)*VY1(N2)*VY1(N3)
+   40         CONTINUE
+   30       CONTINUE
+   20     CONTINUE
+        END IF
+
+   10 CONTINUE
+
+!*  B.C.  *
+      DO 100 I=1,NBC2
+        VVY(NNBC2(I)) = 0.D0
+  100 CONTINUE
+
+      RETURN
+      END
+
+
+
+!* imitation of p.14 *
+
+!************************************************
+!*  Calculate R.H.S. Vector for I.The Model     *
+!*  Used to Calculate stress                    *
+!*  Step 1a                                     *
+!*  Last Modified : OCT 26, 2010                *
+!*  Added		  : OCT 25, 2010                *
+!************************************************
+	subroutine RHSV_T(DT)
+	use parameters
+	implicit none
+
+	integer i
+	double precision DT
+
+	!* Initialization *
+	do i=1,NP
+	TXX0(i) = 0.D0
+	TXY0(i) = 0.D0
+	TYY0(i) = 0.D0	!* 0 fixed
+	end do
+	
+	do i=1,NP
+	CC1(i) = GG0*phi(i)
+	end do
+
+	!* Calculation of stress *
+	do i=1,NP
+	TXY0(i) = SR1/phi(i)
+	NN1(i) = (2.D0*TXY0(i)*SR1)/CC1(i)*(1-DEXP(-CC1(i)*DT))
+	TXX0(i) = NN1(i)
+		
+	end do
+
+	return
+	end
+
+
+!************************************************************************
+!*  Calculate R.H.S. Vector for Fluidity(kind of structure parameter)   *
+!*  Step 1a                                                             *
+!*  Last Modified : OCT 26, 2010                                        *
+!*  Added		  : OCT 25, 2010                                        *
+!************************************************************************
+subroutine RHSV_FLUID(DT)
+use parameters
+implicit none
+
+integer i,N
+integer N1,N2,N3
+double precision DUDX1,DUDY1,DVDX1,DVDY1
+double precision DT
+
+!* initialization *
+	do i=1,NE
+	phi(i)=0.d0
+	end do
+	
+	CC0=kfluid*lambda
+
+!* Calculate Vector *
+	do N=1,NE
+	N1=NOP(N,1)
+	N2=NOP(N,2)
+	N3=NOP(N,3)
+
+!* Derivative of V *
+	DUDX1=EB1(N,1)*VX1(N1) + EB1(N,2)*VX1(N2) + EB1(N,3)*VX1(N3)
+	DUDY1=EC1(N,1)*VY1(N1) + EC1(N,2)*VY1(N2) + EC1(N,3)*VY1(N3)
+	DVDX1=EB1(N,1)*VY1(N1) + EB1(N,2)*VY1(N2) + EB1(N,3)*VY1(N3)
+	DVDY1=EC1(N,1)*VY1(N1) + EC1(N,2)*VY1(N2) + EC1(N,3)*VY1(N3)
+!* SHEAR RATE *
+	SR1 = DSQRT(2.D0*DUDX1**2+(DUDY1+DVDX1)**2+2.D0*DVDY1**2)
+
+!* Calculation of Fluidity *
+	phi(N)=0.5d0*(-(CC0*(SR1**2)-phi0)+DSQRT((CC0*(SR1**2)-phi0)**2+4*CC0*(SR1**2)*phi1))
+
+
+	end do
+
+	return
+	end
+
+!*********************************
+!*  CG Method                    *
+!*  Last Modified : AUG 19,1999  *
+!*********************************
+
+      SUBROUTINE CGPOIS(DT)
+
+
+      use parameters
+!      COMMON /MSH/  NE,NP,NOP(EMAX,3),CORD(NMAX,2)
+!      COMMON /MTR1/ EHX(EMAX,3,3),EHY(EMAX,3,3)
+!      COMMON /MTR4/ ESS(EMAX,3,3)
+!      COMMON /V1/   VX1(NMAX),VY1(NMAX)
+!      COMMON /BC3/  VBC3(BCMAX3),NBC3,NNBC3(BCMAX3)
+!      COMMON /BCN/  VBCN(BCMAXN),NBCN,NNBCN(BCMAXN,2)
+!      COMMON /DP/   XX(NMAX)
+      IMPLICIT NONE
+
+      INTEGER I,J,K,N,N1,N2,ICOUNT,KEND
+      !INTEGER EMAX,NMAX,BCMAX3,BCMAXN
+      DOUBLE PRECISION ALPHA,BETA,DELTA,EPS,EPS1,EPS2
+      DOUBLE PRECISION B2,DT,RUR0,RUR1,PAP,RES2
+
+      !PARAMETER(EMAX=5000,NMAX=5000)
+      !PARAMETER(BCMAX3=200)
+      !PARAMETER(BCMAXN=50)
+
+      DOUBLE PRECISION R(NMAX),P(NMAX)
+      DOUBLE PRECISION AP(NMAX),B(NMAX)
+
+      !INTEGER NE,NP,NOP,NBC3,NBCN,NNBC3,NNBCN
+      !DOUBLE PRECISION CORD,EHX,EHY,ESS
+      !DOUBLE PRECISION VX1,VY1,XX
+      !DOUBLE PRECISION VBC3,VBCN
+
+!C     EPS1 = 1.D-20
+      EPS1 = 1.D-04
+      EPS2 = EPS1*EPS1
+      KEND=1000
+      DELTA=-1.D0/DT
+
+!*  Initialization  *
+      DO 100 I=1,NP
+         R(I)  = 0.D0
+         B(I)  = 0.D0
+         XX(I) = 0.D0
+  100 CONTINUE
+
+!*     r0 = b-Ax0 (x0=0)
+      DO 110 N=1,NE
+        DO 120 I=1,3
+          N1 = NOP(N,I)
+          DO 130 J=1,3
+            N2 = NOP(N,J)
+            B(N1) = B(N1)+DELTA*(EHX(N,I,J)*VX1(N2)+EHY(N,I,J)*VY1(N2))
+  130     CONTINUE
+  120   CONTINUE
+  110 CONTINUE
+
+!  NATURAL B.C.  *
+      DO 600 I=1,NBCN
+        N1 = NNBCN(I,1)
+        N2 = NNBCN(I,2)
+        B(N1) = B(N1) + 0.5D0*VBCN(I)
+        B(N2) = B(N2) + 0.5D0*VBCN(I)
+  600 CONTINUE
+
+!*  B.C. (DP=0)  *
+      DO 700 I=1,NBC3
+        B(NNBC3(I)) = 0.D0
+  700 CONTINUE
+
+!*     p0=r0
+
+      DO 510 I=1,NP
+        R(I) = B(I)
+        P(I) = B(I)
+  510 CONTINUE
+
+      B2 = 0.0
+      DO 530 I=1,NP
+        B2 = B2 + B(I)**2
+  530 CONTINUE
+ 
+      IF(B2 .LT. EPS2) THEN
+        EPS = 0.D0
+        ICOUNT = 1
+        GOTO 999
+      END IF
+
+!*     Iterative Loop
+
+      ICOUNT = 0
+      DO 10 K=1,KEND
+        ICOUNT = ICOUNT + 1
+
+        DO 300 I=1,NP
+          AP(I) = 0.D0
+  300   CONTINUE
+
+!*     AP : Apk      P: pk
+!*     PAP: (pk,Apk) 
+
+        DO 310 N=1,NE
+          DO 320 I=1,3
+            N1 = NOP(N,I)
+            DO 330 J=1,3
+              N2 = NOP(N,J)
+              AP(N1) = AP(N1) + ESS(N,I,J)*P(N2)
+  330       CONTINUE
+  320     CONTINUE
+  310   CONTINUE
+
+!*  B.C. (DP=0)  *
+      DO 800 I=1,NBC3
+        AP(NNBC3(I)) = 0.D0
+  800 CONTINUE
+
+
+        RUR0 = 0.D0
+        DO 400 I=1,NP
+          RUR0 = RUR0 + P(I)*R(I)
+  400   CONTINUE
+
+        PAP=0.D0
+        DO 540 I=1,NP
+          PAP = PAP + P(I)*AP(I)
+  540   CONTINUE
+
+        IF (PAP .EQ. 0.0) THEN
+          ALPHA = 0.D0
+        ELSE
+          ALPHA = RUR0/PAP
+        END IF
+
+        DO 550 I=1,NP
+           XX(I) = XX(I) + ALPHA*P(I)
+           R(I)  = R(I)  - ALPHA*AP(I)
+  550   CONTINUE
+
+!*  Boundary Condition  *
+!*        DO 410 I=1,NBC3
+!*           XX(NNBC3(I)) = 0.D0
+!*            R(NNBC3(I)) = 0.D0
+!*  410   CONTINUE
+
+        RUR1=0.D0
+        RES2=0.D0
+        DO 560 I=1,NP
+          RUR1 = RUR1 + R(I)*AP(I)
+          RES2 = RES2 + R(I)**2
+  560   CONTINUE
+
+        EPS = RES2/B2
+        IF(EPS .LE. EPS2)  THEN
+          GO TO 999
+        END IF
+
+!*  NOT CONVERGED  *
+        BETA = -RUR1/PAP
+        DO 570 I=1,NP
+
+!*     p(k+1) = r(k+1)+beta*p(k)
+
+          P(I) = R(I) + BETA*P(I)
+
+  570   CONTINUE
+
+   10 CONTINUE
+
+  999 KEND = ICOUNT
+      RETURN
+      END
+
+
+!**********************************
+!*  Update Results                *
+!*  Last Modified : OCT 10, 2010  *
+!**********************************
+
+      SUBROUTINE UPDATE(NPSUB)
+
+!REWRITE NP TO NPSUB
+
+      use parameters
+
+!      COMMON /V0/ VX0(NMAX),VY0(NMAX)
+!      COMMON /V1/ VX1(NMAX),VY1(NMAX)
+!      COMMON /PR/ PR0(NMAX),PR1(NMAX)
+      IMPLICIT NONE
+      INTEGER I,NPSUB !,NMAX
+      !PARAMETER(NMAX=5000)
+
+      !DOUBLE PRECISION VX0,VY0,VX1,VY1,PR0,PR1
+
+     
+
+
+      DO 10 I=1,NPSUB
+        VX0(I) = VX1(I)
+        VY0(I) = VY1(I)
+        PR0(I) = PR1(I)
+   10 CONTINUE
+
+      RETURN
+      END
+
+!*  Added 10/10/20
+
+!**********************************
+!*  Update Results per step       *
+!*  Last Modified : OCT 10, 2010  *
+!**********************************
+
+      SUBROUTINE UPDATE_STEP(NESB,NPSB)
+
+!REWRITE NP TO NPSUB
+
+      use parameters
+
+!      COMMON /V0/ VX0(NMAX),VY0(NMAX)
+!      COMMON /V1/ VX1(NMAX),VY1(NMAX)
+!      COMMON /PR/ PR0(NMAX),PR1(NMAX)
+      IMPLICIT NONE
+      INTEGER I,NESB,NPSB !,NMAX
+      !PARAMETER(NMAX=5000)
+
+      !DOUBLE PRECISION VX0,VY0,VX1,VY1,PR0,PR1
+
+     
+
+
+      DO  I=1,NPSB
+        VX0(I) = VX1(I)
+        VY0(I) = VY1(I)
+        PR0(I) = PR1(I)
+   END DO
+
+      RETURN
+      END
+
+
+
+
+!****************************************
+!*   HISTORY                            *
+!*                                      *
+!*   October ?, 2010: coding was begun  *
+!*   October 26, 2010: ver.2.00         *
+!****************************************
